@@ -45,23 +45,26 @@ jobs:
       - name: Detect Azure ML workspace
         id: detect
         run: |
-          RG_NAME=$(az group list --query "[?starts_with(name,'rg-ai300-l')].name | [0]" -o tsv)
+          set -e
+
+          RG_NAME=$(az group list --query "[?contains(name, 'ai300')].name | sort(@) | [0]" -o tsv)
           if [ -z "$RG_NAME" ]; then
-            echo "No resource group starting with rg-ai300-l found." >&2
+            echo "No Azure ML resource group found. Make sure infra/setup.sh has run and the resource group name contains 'ai300'." >&2
             exit 1
           fi
 
-          WS_NAME=$(az ml workspace list --resource-group "$RG_NAME" --query "[?starts_with(name,'mlw-ai300-l')].name | [0]" -o tsv)
+          WS_NAME=$(az ml workspace list --resource-group "$RG_NAME" --query "[0].name" -o tsv)
           if [ -z "$WS_NAME" ]; then
-            echo "No workspace starting with mlw-ai300-l found in $RG_NAME." >&2
+            echo "No Azure ML workspace found in resource group '$RG_NAME'." >&2
             exit 1
           fi
 
           SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+          ENDPOINT_NAME="${ENDPOINT_NAME:-diabetes-endpoint}"
 
-          # unique, deterministic, region-safe name
-          SUFFIX="${WS_NAME#mlw-ai300-l}"
-          ENDPOINT_NAME="diabetes-endpoint-${SUFFIX:0:8}"
+          echo "Using resource group: $RG_NAME"
+          echo "Using workspace: $WS_NAME"
+          echo "Using endpoint name: $ENDPOINT_NAME"
 
           echo "resource_group=$RG_NAME" >> "$GITHUB_OUTPUT"
           echo "workspace=$WS_NAME" >> "$GITHUB_OUTPUT"
@@ -70,12 +73,14 @@ jobs:
 
       - name: Deploy model to managed online endpoint
         id: deploy
+        env:
+          ENDPOINT_NAME: ${{ steps.detect.outputs.endpoint_name }}
         run: |
           python src/deploy_to_online_endpoint.py \
             --subscription-id "${{ steps.detect.outputs.subscription_id }}" \
             --resource-group "${{ steps.detect.outputs.resource_group }}" \
             --workspace "${{ steps.detect.outputs.workspace }}" \
-            --endpoint-name "${{ steps.detect.outputs.endpoint_name }}" \
+            --endpoint-name "$ENDPOINT_NAME" \
             --deployment-name "blue"
 
       - name: Comment deployment result on pull request
